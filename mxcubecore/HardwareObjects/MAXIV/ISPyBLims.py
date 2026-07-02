@@ -16,11 +16,18 @@ class ISPyBLims(UserTypeISPyBLims):
     def __init__(self, name: str):
         super().__init__(name)
         self._duo_api_url = ""
+        self._rest_client = None
 
     def init(self):
         self._duo_api_url: str = self.get_property("duo_api_url")
         pyispyb_rest_root = self.get_property("pyispyb_rest_root")
-        self._rest_client = PyISPyBRestClient(pyispyb_rest_root)
+        self._rest_client = PyISPyBRestClient(
+            rest_root=pyispyb_rest_root,
+            keycloak_url=self.get_property("keycloak_url"),
+            grant_type=self.get_property("grant_type"),
+            client_id=self.get_property("client_id"),
+            client_secret=self.get_property("client_secret"),
+        )
         super().init()
 
     def _create_data_adapter(self) -> MAXIVPyISPyBDataAdapter:

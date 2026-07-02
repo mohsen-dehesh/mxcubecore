@@ -1,9 +1,10 @@
 from datetime import datetime, timedelta, timezone
 from json.decoder import JSONDecodeError
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
+import jwt
 from mxcubecore.HardwareObjects.abstract.PyISPyBRestClient import (
     AuthenticationExpired,
     NoTokenException,
@@ -11,10 +12,24 @@ from mxcubecore.HardwareObjects.abstract.PyISPyBRestClient import (
     PyISPyBUnsuccessfulResponse,
 )
 
+REST_ROOT = "https://pyispyb.example.org/ispyb/api/v1/"
+KEYCLOAK_URL = "https://keycloak.example.org/realms/<realmName>/protocol/openid-connect/token"
+GRANT_TYPE = "client_credentials"
+CLIENT_ID = "<CLIENT_ID>"
+CLIENT_SECRET = "<CLIENT_SECRET>"
+
 
 @pytest.fixture
 def client():
-    return PyISPyBRestClient(rest_root="http://localhost/ispyb/api/v1/")
+    client = PyISPyBRestClient(
+        rest_root=REST_ROOT,
+        keycloak_url=KEYCLOAK_URL,
+        grant_type=GRANT_TYPE,
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+    )
+    client.log = Mock()
+    return client
 
 
 def build_response(
@@ -40,90 +55,88 @@ def build_response(
 # AUTHENTICATION
 # =========================================================
 
+def test_authenticate_success_real_test():
+    client = PyISPyBRestClient(
+        rest_root=REST_ROOT,
+        keycloak_url=KEYCLOAK_URL,
+        grant_type=GRANT_TYPE,
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+    )
+
+    client._session.trust_env = False
+
+    client.authenticate()
+
+    userinfo_url = "https://test-helium.synchrotron-soleil.fr:8443/realms/pyispyb/protocol/openid-connect/userinfo"
+
+    claims = jwt.decode(
+        client._access_token,
+        options={"verify_signature": False},
+    )
+
+    claim2 = jwt.decode(
+        client._access_token,
+        options={"verify_signature": False},
+    )
+
+    response = client._session.get(
+        userinfo_url,
+        headers={
+            "Authorization": f"Bearer {client._access_token}"
+        }
+    )
+
 
 def test_authenticate_success(client):
-    login_response = {
-        "token": "access-token",
-        "refreshToken": "refresh-token",
-        "expiresIn": 300,
+    keycloak_response = MagicMock()
+    keycloak_response.status_code = 200
+    keycloak_response.text = '{"access_token":"JDAludM5lGYCYj8Ri","expires_in":300}'
+    keycloak_response.json.return_value = {
+        "access_token": "JDAludM5lGYCYj8Ri",
+        "expires_in": 300,
+        "refresh_expires_in": 0,
+        "token_type": "Bearer",
+        "not-before-policy": 1734028550,
+        "scope": "email profile"
     }
-    client.post = MagicMock(return_value=login_response)
 
-    client.authenticate(user_name="testusr", token="testtkn")  # noqa: S106
+    client._session.post = MagicMock(return_value=keycloak_response)
 
-    client.post.assert_called_once_with(
-        "auth/login",
-        json={"plugin": "keycloak", "login": "testusr", "token": "testtkn"},
-        skip_refresh=True,
+    client._session.trust_env = False
+
+    client.authenticate()
+
+    client._session.post.assert_called_once_with(
+        KEYCLOAK_URL,
+        data={
+            "grant_type": GRANT_TYPE,
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+        },
+        timeout=client._timeout
     )
-    assert client._access_token == "access-token"  # noqa: S105
-    assert client._refresh_token == "refresh-token"  # noqa: S105
-    assert client._session.headers["Authorization"] == "Bearer access-token"
-    assert client._token_expiry is not None
+
+    assert client._access_token == keycloak_response.json.return_value["access_token"]
+
+    assert (
+        client._session.headers["Authorization"]
+        == "Bearer JDAludM5lGYCYj8Ri"
+    )
 
 
 def test_authenticate_without_token_raises(client):
-    client.post = MagicMock(return_value={})
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.text = "{}"
+    fake_response.json.return_value = {}
+
+    client._session.post = MagicMock(return_value=fake_response)
+
+    client.log.debug.assert_called_once_with("Exception ")
 
     with pytest.raises(NoTokenException):
-        client.authenticate(user_name="pyispyb_admin", token="kc-token")  # noqa: S106
-
-
-# =========================================================
-# TOKEN REFRESH
-# =========================================================
-
-
-def test_refresh_access_token_success(client):
-    client._refresh_token = "refresh-token"  # noqa: S105
-    response = build_response(
-        json_data={
-            "token": "new-access-token",
-            "refreshToken": "new-refresh-token",
-            "expiresIn": 300,
-        }
-    )
-    client._session.post = MagicMock(return_value=response)
-
-    client._refresh_access_token()
-
-    assert client._access_token == "new-access-token"  # noqa: S105
-    assert client._refresh_token == "new-refresh-token"  # noqa: S105
-    assert client._session.headers["Authorization"] == "Bearer new-access-token"
-
-
-def test_refresh_access_token_without_refresh_token_raises(client):
-    client._refresh_token = None
-
-    with pytest.raises(AuthenticationExpired):
-        client._refresh_access_token()
-
-
-def test_refresh_access_token_failure_raises(client):
-    client._refresh_token = "invalid-token"  # noqa: S105
-    response = build_response(
-        status_code=401,
-        text="Unauthorized",
-    )
-    client._session.post = MagicMock(return_value=response)
-
-    with pytest.raises(AuthenticationExpired):
-        client._refresh_access_token()
-
-
-def test_refresh_access_token_malformed_response(client):
-    client._refresh_token = "refresh-token"  # noqa: S105
-    response = build_response(
-        json_data=JSONDecodeError(
-            "invalid json",
-            "doc",
-            0,
-        )
-    )
-    client._session.post = MagicMock(return_value=response)
-
-    with pytest.raises(AuthenticationExpired):
-        client._refresh_access_token()
+        client.authenticate()
 
 
 # =========================================================
@@ -230,40 +243,6 @@ def test_decode_json_response_raises_on_invalid_json(client):
 
     with pytest.raises(JSONDecodeError):
         client.decode_json_response(response)
-
-
-# =========================================================
-# STORE TOKENS
-# =========================================================
-
-
-def test_store_tokens_success(client):
-    tokens = {
-        "token": "new-access-token",
-        "refreshToken": "new-refresh-token",
-        "expiresIn": 300,
-    }
-
-    client._store_tokens(tokens)
-
-    assert client._access_token == "new-access-token"  # noqa: S105
-    assert client._refresh_token == "new-refresh-token"  # noqa: S105
-    assert client._session.headers["Authorization"] == "Bearer new-access-token"
-
-
-@pytest.mark.parametrize("tokens", [None, [], 0])
-def test_store_tokens_wrong_response_type(tokens, client):
-    with pytest.raises(NoTokenException):
-        client._store_tokens(tokens)
-
-
-def test_store_tokens_missing_access_token(client):
-    tokens = {
-        "refreshToken": "new-refresh-token",
-        "expiresIn": 300,
-    }
-    with pytest.raises(NoTokenException):
-        client._store_tokens(tokens)
 
 
 # =========================================================

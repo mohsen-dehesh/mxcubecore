@@ -49,6 +49,49 @@ def test_get_current_user_data(adapter, client):
     assert currrent_user["personId"] == 123456
 
 
+
+REST_ROOT = "https://pyispyb.example.org/ispyb/api/v1/"
+KEYCLOAK_URL = "https://keycloak.example.org/realms/<realmName>/protocol/openid-connect/token"
+GRANT_TYPE = "client_credentials"
+CLIENT_ID = "<CLIENT_ID>"
+CLIENT_SECRET = "<CLIENT_SECRET>"
+
+def test_get_proposals_real_client():
+    client = PyISPyBRestClient(
+        rest_root=REST_ROOT,
+        keycloak_url=KEYCLOAK_URL,
+        grant_type=GRANT_TYPE,
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+    )
+
+    client._session.trust_env = False
+    client._session.verify = False
+
+    adapter = PyISPyBDataAdapter(client, "PROXIMA1")
+    proposals = adapter.get_proposals()
+
+    print(f"length proposal****************", len(proposals))
+
+
+def test_find_proposal_real_client():
+    client = PyISPyBRestClient(
+        rest_root=REST_ROOT,
+        keycloak_url=KEYCLOAK_URL,
+        grant_type=GRANT_TYPE,
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+    )
+
+    client._session.trust_env = False
+    client._session.verify = False
+
+    adapter = PyISPyBDataAdapter(client, "PROXIMA1")
+
+    proposal_A = adapter.find_proposal("MX", "20090662")
+    print(proposal_A)
+
+
 def test_get_proposals(adapter, client):
     client.get.return_value = proposals_response()
 

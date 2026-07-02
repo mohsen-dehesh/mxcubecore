@@ -1,6 +1,7 @@
 import logging
 import os
 from collections import namedtuple
+from typing import List, Dict
 
 import urllib2
 from cookielib import CookieJar
@@ -12,6 +13,10 @@ from suds.client import Client
 from suds.transport.http import HttpAuthenticated
 
 from mxcubecore import HardwareRepository as HWR
+from mxcubecore.HardwareObjects.abstract.ISPyBAbstractLims import ISPyBAbstractLIMS
+from mxcubecore.HardwareObjects.abstract.PyISPyBDataAdapter import PyISPyBDataAdapter
+from mxcubecore.HardwareObjects.abstract.PyISPyBRestClient import PyISPyBRestClient
+from mxcubecore.model.lims_session import Session
 
 # The WSDL root is configured in the hardware object XML file.
 # _WS_USERNAME, _WS_PASSWORD have to be configured in the HardwareObject XML file.
@@ -29,10 +34,11 @@ SampleReference = namedtuple(
 )
 
 
-class SOLEILISPyBClient(ISPyBClient):
+class SOLEILISPyBClient(ISPyBAbstractLIMS):
     def __init__(self, name):
         ISPyBClient.__init__(self, name)
 
+        super().__init__(name)
         logger = logging.getLogger("ispyb_client")
         print("ISPYB")
 
@@ -194,6 +200,28 @@ class SOLEILISPyBClient(ISPyBClient):
                 image_dict[prop] = ispyb_path
             except Exception:
                 self.log.exception("")
+
+    def login(self, login_id: str, password: str, create_session: bool) -> List[Session]:
+        pass
+
+    def get_proposals_by_user(self, login_id: str) -> List[Dict]:
+        pass
+
+    def _create_data_adapter(self):
+        pyispyb_rest_root = self.get_property("pyispyb_rest_root")
+        if pyispyb_rest_root:
+            client = PyISPyBRestClient(
+                rest_root=pyispyb_rest_root,
+                keycloak_url=self.get_property("keycloak_url"),
+                grant_type=self.get_property("grant_type"),
+                client_id=self.get_property("client_id"),
+                client_secret=self.get_property("client_secret"),
+            )
+            return PyISPyBDataAdapter(
+                client,
+                self.beamline_name
+            )
+        return super()._create_data_adapter()
 
 
 def test_hwo(hwo):
